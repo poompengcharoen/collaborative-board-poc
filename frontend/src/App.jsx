@@ -4,36 +4,39 @@ import { useEffect, useRef, useState } from 'react'
 
 import { io } from 'socket.io-client'
 
+// Initialize socket connection to server
 const socket = io('http://localhost:4000')
 
 const App = () => {
-	const canvasRef = useRef(null)
-	const [canvas, setCanvas] = useState(null)
-	const [isDrawing, setIsDrawing] = useState(false)
-	const [selectedShapes, setSelectedShapes] = useState([])
+	const canvasRef = useRef(null) // Reference for the canvas DOM element
+	const [canvas, setCanvas] = useState(null) // State to hold fabric canvas instance
+	const [isDrawing, setIsDrawing] = useState(false) // State to toggle drawing mode
+	const [selectedShapes, setSelectedShapes] = useState([]) // State to keep track of selected shapes for arrow creation
 
 	useEffect(() => {
-		const fabricCanvas = new fabric.Canvas(canvasRef.current)
-		setCanvas(fabricCanvas)
-		setupSocketListeners(fabricCanvas)
+		const fabricCanvas = new fabric.Canvas(canvasRef.current) // Initialize fabric canvas
+		setCanvas(fabricCanvas) // Save the fabric canvas instance to state
+		setupSocketListeners(fabricCanvas) // Set up listeners for socket events
 
+		// Handle 'path:created' event for drawing new paths
 		fabricCanvas.on('path:created', (event) => {
 			const newPath = event.path
-			newPath.id = generateId()
+			newPath.id = generateId() // Assign a unique ID to the new path
 			socket.emit('draw', {
 				path: newPath.path,
 				options: newPath.toObject(),
 				id: newPath.id,
-			})
-			onModifyPath(newPath)
+			}) // Emit draw event to sync with other clients
+			onModifyPath(newPath) // Set up event listeners for the new path's modifications
 		})
 
 		return () => {
-			fabricCanvas.dispose()
-			cleanupSocketListeners()
+			fabricCanvas.dispose() // Clean up fabric canvas on unmount
+			cleanupSocketListeners() // Remove socket listeners on unmount
 		}
 	}, [])
 
+	// Set up socket listeners to handle incoming drawing events from other clients
 	const setupSocketListeners = (fabricCanvas) => {
 		socket.on('draw', (data) => addPathToCanvas(fabricCanvas, data))
 		socket.on('modifyPath', (data) => modifyObjectOnCanvas(fabricCanvas, data))
@@ -44,6 +47,7 @@ const App = () => {
 		socket.on('clear', () => fabricCanvas.clear())
 	}
 
+	// Clean up socket listeners on component unmount
 	const cleanupSocketListeners = () => {
 		socket.off('draw')
 		socket.off('modifyPath')
@@ -54,21 +58,24 @@ const App = () => {
 		socket.off('clear')
 	}
 
+	// Add a new path to the canvas with specified options
 	const addPathToCanvas = (fabricCanvas, { path, options, id }) => {
 		const newPath = new fabric.Path(path, options)
-		newPath.id = id
+		newPath.id = id // Set unique ID
 		fabricCanvas.add(newPath)
-		onModifyPath(newPath)
+		onModifyPath(newPath) // Set up listeners for modifications to sync with other clients
 	}
 
+	// Modify existing object on the canvas based on socket data
 	const modifyObjectOnCanvas = (fabricCanvas, { id, options }) => {
 		const object = fabricCanvas.getObjects().find((obj) => obj.id === id)
 		if (object) {
-			object.set(options).setCoords()
-			fabricCanvas.renderAll()
+			object.set(options).setCoords() // Apply changes to object and update coordinates
+			fabricCanvas.renderAll() // Re-render canvas to reflect changes
 		}
 	}
 
+	// Add a shape to the canvas, either a circle or rectangle
 	const addShapeToCanvas = (fabricCanvas, { id, type, options }) => {
 		let shape
 		if (type === 'circle') {
@@ -78,13 +85,14 @@ const App = () => {
 		}
 		if (shape) {
 			shape.id = id
-			addShapeSelection(shape)
+			addShapeSelection(shape) // Enable shape selection for arrows
 			fabricCanvas.add(shape)
-			onModifyShape(fabricCanvas, shape)
+			onModifyShape(fabricCanvas, shape) // Set up listeners for shape modifications
 		}
 		return shape
 	}
 
+	// Add an arrow connecting two shapes on the canvas
 	const addArrowToCanvas = (
 		fabricCanvas,
 		{ id1, id2, lineId, arrowHeadId }
@@ -92,10 +100,11 @@ const App = () => {
 		const shape1 = fabricCanvas.getObjects().find((obj) => obj.id === id1)
 		const shape2 = fabricCanvas.getObjects().find((obj) => obj.id === id2)
 		if (shape1 && shape2) {
-			addArrow(fabricCanvas, shape1, shape2, lineId, arrowHeadId)
+			addArrow(fabricCanvas, shape1, shape2, lineId, arrowHeadId) // Create the arrow if both shapes exist
 		}
 	}
 
+	// Update the position of an existing arrow on the canvas
 	const updateArrowOnCanvas = (
 		fabricCanvas,
 		{ lineId, arrowHeadId, line, arrowHead }
@@ -107,22 +116,25 @@ const App = () => {
 			.getObjects()
 			.find((obj) => obj.id === arrowHeadId)
 		if (lineObject && arrowHeadObject) {
-			lineObject.set(line)
-			arrowHeadObject.set(arrowHead)
+			lineObject.set(line) // Update line position
+			arrowHeadObject.set(arrowHead) // Update arrowhead position
 			lineObject.setCoords()
 			arrowHeadObject.setCoords()
-			fabricCanvas.renderAll()
+			fabricCanvas.renderAll() // Re-render canvas to reflect changes
 		}
 	}
 
+	// Toggle between drawing mode and selection mode
 	const toggleDrawingMode = () => {
 		setIsDrawing(!isDrawing)
-		canvas.isDrawingMode = !isDrawing
-		canvas.freeDrawingBrush = new fabric.PencilBrush(canvas)
+		canvas.isDrawingMode = !isDrawing // Toggle fabric.js drawing mode
+		canvas.freeDrawingBrush = new fabric.PencilBrush(canvas) // Set drawing tool to pencil brush
 	}
 
+	// Generate a unique identifier for shapes and paths
 	const generateId = () => '_' + Math.random().toString(36).substr(2, 9)
 
+	// Add a shape of specified type (circle or rectangle) to canvas and emit socket event
 	const onAddShape = (type) => {
 		const shapeOptions = {
 			circle: {
@@ -153,13 +165,15 @@ const App = () => {
 		}
 	}
 
+	// Event handlers for adding specific shapes
 	const onAddCircle = () => onAddShape('circle')
 	const onAddRectangle = () => onAddShape('rectangle')
 
+	// Set up listeners for shape modifications and emit modification events
 	const onModifyShape = (canvas, shape) => {
 		shape.on('moving', () => {
 			socket.emit('modifyShape', { id: shape.id, options: shape.toObject() })
-			updateConnectedArrows(canvas, shape)
+			updateConnectedArrows(canvas, shape) // Update arrows connected to the shape
 		})
 
 		shape.on('modified', () => {
@@ -168,6 +182,7 @@ const App = () => {
 		})
 	}
 
+	// Set up listeners for path modifications and emit modification events
 	const onModifyPath = (path) => {
 		path.on('moving', () => {
 			socket.emit('modifyPath', { id: path.id, options: path.toObject() })
@@ -178,11 +193,12 @@ const App = () => {
 		})
 	}
 
+	// Manage selection and deselection of shapes to limit to two for arrow creation
 	const addShapeSelection = (shape) => {
 		shape.on('selected', () => {
 			setSelectedShapes((prev) => {
 				const newShapes = [...prev, shape]
-				if (newShapes.length > 2) newShapes.shift()
+				if (newShapes.length > 2) newShapes.shift() // Keep only the last two selected shapes
 				return newShapes
 			})
 		})
@@ -191,6 +207,7 @@ const App = () => {
 		})
 	}
 
+	// Add an arrow between two selected shapes and emit the event to sync with other clients
 	const onAddArrow = () => {
 		if (selectedShapes.length === 2) {
 			const [shape1, shape2] = selectedShapes
@@ -209,6 +226,7 @@ const App = () => {
 		}
 	}
 
+	// Create an arrow between two shapes by adding a line and an arrowhead
 	const addArrow = (fabricCanvas, shape1, shape2, lineId, arrowHeadId) => {
 		const shape1Center = shape1.getCenterPoint()
 		const shape2Center = shape2.getCenterPoint()
@@ -221,8 +239,9 @@ const App = () => {
 			lineId,
 			arrowHeadId
 		)
-		fabricCanvas.add(line, arrowHead)
+		fabricCanvas.add(line, arrowHead) // Add line and arrowhead to canvas
 
+		// Update arrow position when shapes are moved
 		shape1.on('moving', () =>
 			updateArrowPosition(fabricCanvas, line, arrowHead, shape1, shape2)
 		)
@@ -233,6 +252,7 @@ const App = () => {
 		onArrowMove(line, arrowHead, shape1, shape2)
 	}
 
+	// Create line and triangle to form an arrow with specified start and end points
 	const createArrow = (x1, y1, x2, y2, lineId, arrowHeadId) => {
 		const line = new fabric.Line([x1, y1, x2, y2], {
 			stroke: 'black',
@@ -248,7 +268,7 @@ const App = () => {
 			top: y2,
 			originX: 'center',
 			originY: 'center',
-			angle: (angle * 180) / Math.PI + 90,
+			angle: (angle * 180) / Math.PI + 90, // Rotate arrowhead to point correctly
 			width: 10,
 			height: 15,
 			fill: 'black',
@@ -260,10 +280,12 @@ const App = () => {
 		return { line, arrowHead }
 	}
 
+	// Update arrow position dynamically as connected shapes move
 	const updateArrowPosition = (canvas, line, arrowHead, shape1, shape2) => {
 		const shape1Center = shape1.getCenterPoint()
 		const shape2Center = shape2.getCenterPoint()
 
+		// Update line coordinates based on shape centers
 		line.set({
 			x1: shape1Center.x,
 			y1: shape1Center.y,
@@ -283,9 +305,10 @@ const App = () => {
 
 		line.setCoords()
 		arrowHead.setCoords()
-		canvas.renderAll()
+		canvas.renderAll() // Re-render to show updated arrow position
 	}
 
+	// Emit socket events to update arrows connected to a modified shape
 	const updateConnectedArrows = (canvas, shape) => {
 		const arrows = canvas
 			.getObjects()
@@ -317,6 +340,7 @@ const App = () => {
 		})
 	}
 
+	// Emit socket events to sync arrow movements with other clients
 	const onArrowMove = (line, arrowHead, shape1, shape2) => {
 		shape1.on('moving', () => {
 			socket.emit('updateArrow', {
@@ -354,6 +378,7 @@ const App = () => {
 		})
 	}
 
+	// Clear canvas and emit clear event to sync with other clients
 	const onClear = () => {
 		canvas.clear()
 		socket.emit('clear')
